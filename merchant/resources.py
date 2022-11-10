@@ -190,12 +190,6 @@ class CategoryModelResource(ModelResource):
         always_return_data = True
         read_only_fields = ['id', 'created_at', 'updated_at']
 
-    # def hydrate(self, bundle):
-    #     bundle.obj.parent = {
-    #         "pk": bundle.data.get('parent', None)
-    #     }
-    #     return bundle
-
 
 class ItemModelResource(ModelResource):
     id = fields.IntegerField(attribute='id', readonly=True)
