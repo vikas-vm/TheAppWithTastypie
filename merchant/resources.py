@@ -2,7 +2,7 @@ from .models import Merchant, Store, Category, Item
 from django.urls import re_path
 from tastypie.utils import trailing_slash
 from tastypie.resources import ModelResource
-from tastypie.http import HttpUnauthorized, HttpForbidden, HttpBadRequest
+from tastypie.http import HttpUnauthorized, HttpForbidden, HttpBadRequest, HttpNotFound
 from authentication.jwt_auth import JWTAuthorization
 from tastypie.serializers import Serializer
 from tastypie import fields
@@ -18,7 +18,7 @@ class MerchantModelResource(ModelResource):
         allowed_methods = []
         list_allowed_methods = []
         detail_allowed_methods = []
-        resource_name = 'merchant'
+        resource_name = 'profile'
         authentication = JWTAuthorization()
         authorization = JWTAuthorization()
         serializer = Serializer()
@@ -39,9 +39,14 @@ class MerchantModelResource(ModelResource):
         merchant = Merchant.objects.filter(user=request.user)
         if merchant.exists():
             merchant = merchant.first()
+        else:
+            return self.create_response(request, {
+                'success': False,
+                'message': 'Merchant detail not found',
+            }, HttpNotFound)
 
         data = {
-            'id': merchant.id,
+            'id': request.user.id,
             'name': merchant.name,
             'address1': merchant.address1,
             'address2': merchant.address2,
@@ -137,6 +142,8 @@ class StoreModelResource(ModelResource):
     id = fields.IntegerField(attribute='id', readonly=True)
     created_at = fields.DateTimeField(attribute='created_at', readonly=True)
     updated_at = fields.DateTimeField(attribute='updated_at', readonly=True)
+    # items = fields.ToManyField(
+    #     'merchant.resources.ItemModelResource', 'items', readonly=True, null=True)
 
     class Meta:
         queryset = Store.objects.all()
@@ -145,6 +152,16 @@ class StoreModelResource(ModelResource):
         authorization = JWTAuthorization()
         serializer = Serializer()
         always_return_data = True
+
+    def prepend_urls(self):
+        return [
+            re_path(r"^(?P<resource_name>%s)/(?P<store_id>\d+)/items%s$" % (self._meta.resource_name,
+                    trailing_slash()), self.wrap_view('items'), name="api_items"),
+            re_path(r"^(?P<resource_name>%s)/(?P<store_id>\d+)/item/add%s$" % (self._meta.resource_name,
+                    trailing_slash()), self.wrap_view('adding_item_to_store'), name="api_add_item"),
+            re_path(r"^(?P<resource_name>%s)/(?P<store_id>\d+)/item/remove%s$" % (self._meta.resource_name,
+                    trailing_slash()), self.wrap_view('remove_item_from_store'), name="api_remove_item"),
+        ]
 
     def obj_get_list(self, bundle, **kwargs):
         return Store.objects.filter(merchant__user=bundle.request.user)
@@ -171,6 +188,126 @@ class StoreModelResource(ModelResource):
         bundle.obj.merchant = Merchant.objects.get(user=bundle.request.user)
         return bundle
 
+    def items(self, request, **kwargs):
+        self.method_check(request, allowed=['get'])
+        self.is_authenticated(request)
+        self.throttle_check(request)
+        store = Store.objects.filter(
+            id=kwargs['store_id'], merchant__user=request.user)
+
+        if store.exists():
+            store = store.first()
+        else:
+            return self.create_response(request, {
+                'success': False,
+                'message': 'Store not found',
+                'data': {}
+            }, HttpNotFound)
+        items = Item.objects.filter(store=store)
+        data = []
+        for item in items:
+            data.append('/api/v1/item/%s/' % item.id)
+        return self.create_response(request, {
+            'success': True,
+            'message': 'Store items',
+            'data': data
+        })
+
+    def adding_item_to_store(self, request, **kwargs):
+        self.method_check(request, allowed=['post'])
+        self.is_authenticated(request)
+        self.throttle_check(request)
+        data = self.deserialize(request, request.body, format=request.META.get(
+            'CONTENT_TYPE', 'application/json'))
+        store = Store.objects.filter(
+            id=kwargs['store_id'], merchant__user=request.user)
+        if store:
+            store = store.first()
+        else:
+            return self.create_response(request, {
+                'success': False,
+                'message': 'Store not found',
+                'data': {}
+            }, HttpNotFound)
+        if data.get('item'):
+            # check if item is associated with less than 3 stores
+            item = Item.objects.filter(
+                id=data.get('item'),  store__isnull=False)
+            item = Item.objects.filter(id=data.get(
+                'item'), merchant=store.merchant)
+            if item:
+                item = item.first()
+            else:
+                return self.create_response(request, {
+                    'success': False,
+                    'message': 'Item not found for this merchant',
+                    'data': {}
+                }, HttpNotFound)
+            item.store.add(store)
+            item.save()
+            return self.create_response(request, {
+                'success': True,
+                'message': 'Item added to store',
+                'data': {}
+            })
+        else:
+            return self.create_response(request, {
+                'success': False,
+                'message': 'Missing fields',
+                'data': {
+                    "item": "This field is required."
+                }
+            }, HttpBadRequest)
+
+    def remove_item_from_store(self, request, **kwargs):
+        self.method_check(request, allowed=['post'])
+        self.is_authenticated(request)
+        self.throttle_check(request)
+        data = self.deserialize(request, request.body, format=request.META.get(
+            'CONTENT_TYPE', 'application/json'))
+        store = Store.objects.filter(
+            id=kwargs['store_id'], merchant__user=request.user)
+        if store:
+            store = store.first()
+        else:
+            return self.create_response(request, {
+                'success': False,
+                'message': 'Store not found',
+                'data': {}
+            }, HttpNotFound)
+        if data.get('item'):
+            item = Item.objects.filter(id=data.get(
+                'item'), merchant=store.merchant)
+            if item:
+                item = item.first()
+            else:
+                return self.create_response(request, {
+                    'success': False,
+                    'message': 'Item not found for this merchant',
+                    'data': {}
+                }, HttpNotFound)
+            if not item.store.filter(id=store.id).exists():
+                return self.create_response(request, {
+                    'success': False,
+                    'message': 'Item not found in this store',
+                    'data': {}
+                }, HttpNotFound)
+            item.store.remove(store)
+            item.save()
+            return self.create_response(request, {
+                'success': True,
+                'message': 'Item removed from store',
+                'data': {}
+            })
+        else:
+            return self.create_response(request, {
+                'success': False,
+                'message': 'Missing fields',
+                'data': {
+                    "item": "This field is required."
+                }
+            }, HttpBadRequest)
+
 
 class CategoryModelResource(ModelResource):
     id = fields.IntegerField(attribute='id', readonly=True)
@@ -196,7 +333,7 @@ class ItemModelResource(ModelResource):
     created_at = fields.DateTimeField(attribute='created_at', readonly=True)
     updated_at = fields.DateTimeField(attribute='updated_at', readonly=True)
     category = fields.ForeignKey(CategoryModelResource, 'category')
-    # store = fields.ForeignKey(StoreModelResource, 'store')
+    store = fields.ToManyField(StoreModelResource, 'store', readonly=True)
 
     class Meta:
         queryset = Item.objects.all()

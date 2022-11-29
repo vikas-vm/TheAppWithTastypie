@@ -43,7 +43,7 @@ class User(AbstractUser):
     email = models.EmailField(
         max_length=150, blank=True, null=True, unique=True)
     user_type = models.CharField(
-        max_length=50, choices=[(tag, tag.value) for tag in UserTypes])
+        max_length=50, choices=[(tag, tag.value) for tag in UserTypes], default=UserTypes.CUSTOMER)
     USERNAME_FIELD = 'email'
     is_active = models.BooleanField(default=True)
     REQUIRED_FIELDS = []

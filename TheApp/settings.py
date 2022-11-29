@@ -43,7 +43,8 @@ INSTALLED_APPS = [
     'merchant.apps.MerchantConfig',
     'customer.apps.CustomerConfig',
     'authentication.apps.AuthenticationConfig',
-    'tastypie'
+    'tastypie',
+    'django_extensions'
 ]
 
 MIDDLEWARE = [
